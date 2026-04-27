@@ -1,4 +1,4 @@
-# Indonesian Region Data
+# Wilayah Indonesia
 
 Provinces, cities, districts, and villages of Indonesia — auto-generated from [BPS](https://sig.bps.go.id/) and published via GitHub Actions.
 
