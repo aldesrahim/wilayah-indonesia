@@ -1,0 +1,50 @@
+name: Generate Data
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 1 * *"  # monthly
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      - name: Generate JSON
+        run: node generate.js
+
+      - name: Commit data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/
+          git diff --cached --quiet || git commit -m "chore: update region data"
+          git push
+
+      - name: Create tag and release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BASE="data-$(date -u +'%Y%m%d')"
+          TAG="$BASE"
+          COUNTER=1
+          while git ls-remote --exit-code origin "refs/tags/$TAG" > /dev/null 2>&1; do
+            TAG="${BASE}-${COUNTER}"
+            COUNTER=$((COUNTER + 1))
+          done
+          git tag "$TAG"
+          git push origin "$TAG"
+          gh release create "$TAG" data/*.json \
+            --title "Region Data $TAG" \
+            --notes "Auto-generated Indonesian region data." \
+            --latest

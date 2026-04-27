@@ -1,0 +1,23 @@
+{
+  "name": "indonesian-region-data",
+  "version": "1.0.0",
+  "description": "Auto-generated Indonesian region data (provinces, cities, districts, villages) from BPS",
+  "main": "generate.js",
+  "scripts": {
+    "generate": "node generate.js"
+  },
+  "keywords": [
+    "indonesia",
+    "region",
+    "province",
+    "city",
+    "district",
+    "village",
+    "wilayah"
+  ],
+  "author": "Al Desrahim <aldesrahim@gmail.com>",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.15.2"
+  }
+}
