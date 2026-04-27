@@ -42,9 +42,20 @@ npm run generate
 # output → data/
 ```
 
-## Updates
+## Releases
 
-GitHub Actions runs monthly and on manual trigger. Each run commits updated data and creates a tagged release (`data-YYYYMMDD`, counter-suffixed if multiple runs per day).
+Data is versioned with [CalVer](https://calver.org/) (`vYYYY.MM`). A new release is automatically created on the 1st of every month.
+
+To trigger manually, push a tag:
+
+```bash
+git tag v2026.04 && git push origin v2026.04
+```
+
+GitHub Actions will:
+1. Create a pre-release immediately (visible while generating)
+2. Generate and commit data to `main`
+3. Attach JSON files and promote to full release
 
 ## Inspiration
 
