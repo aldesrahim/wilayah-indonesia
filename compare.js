@@ -39,6 +39,7 @@ function index(rows, parentRows, parentKey) {
 
   for (const row of rows) {
     map.set(row.code, {
+      id: row.id,
       name: row.name,
       parent: parents ? parents.get(row[parentKey]) : null,
     });
@@ -47,8 +48,23 @@ function index(rows, parentRows, parentKey) {
   return map;
 }
 
+// Rows are keyed by code, so a row carrying a blank code would otherwise be
+// reported as an empty line. Fall back to the row id and say the name is
+// missing, so every listed change names something a reader can look up.
+function tag(code, row) {
+  const id = row && row.id !== undefined ? row.id : "?";
+  return code ? code : `(empty code, id ${id})`;
+}
+
+function label(map, code) {
+  const row = map.get(code);
+  return `${tag(code, row)} ${row && row.name ? row.name : "(no name)"}`;
+}
+
 function diffLevel(level, next, previous) {
-  if (!previous) return { added: [...next.keys()], removed: [], renamed: [], moved: [] };
+  if (!previous) {
+    return { added: [...next.keys()].map((code) => label(next, code)), removed: [], renamed: [], moved: [] };
+  }
 
   const added = [];
   const removed = [];
@@ -59,16 +75,16 @@ function diffLevel(level, next, previous) {
     const before = previous.get(code);
 
     if (!before) {
-      added.push(code);
+      added.push(label(next, code));
       continue;
     }
 
-    if (before.name !== row.name) renamed.push(`${code} ${before.name} -> ${row.name}`);
-    if (before.parent !== row.parent) moved.push(`${code} ${before.parent} -> ${row.parent}`);
+    if (before.name !== row.name) renamed.push(`${tag(code, row)} ${before.name} -> ${row.name}`);
+    if (before.parent !== row.parent) moved.push(`${tag(code, row)} ${row.name} ${before.parent} -> ${row.parent}`);
   }
 
   for (const code of previous.keys()) {
-    if (!next.has(code)) removed.push(code);
+    if (!next.has(code)) removed.push(label(previous, code));
   }
 
   return { added, removed, renamed, moved };
@@ -121,14 +137,24 @@ function main() {
     if (moved.length) parts.push(`${moved.length} reparented`);
     lines.push(`- **${level.file}**: ${parts.join(", ")}`);
 
-    for (const [label, items] of [
+    // The same capped list goes to the log and to summary.md, so the release
+    // notes name the changed regions instead of only counting them.
+    for (const [kind, items] of [
       ["added", added],
       ["removed", removed],
       ["renamed", renamed],
       ["reparented", moved],
     ]) {
-      for (const item of items.slice(0, MAX_LISTED)) console.log(`    ${label}: ${item}`);
-      if (items.length > MAX_LISTED) console.log(`    ${label}: +${items.length - MAX_LISTED} more`);
+      for (const item of items.slice(0, MAX_LISTED)) {
+        console.log(`    ${kind}: ${item}`);
+        lines.push(`  - ${kind}: ${item}`);
+      }
+
+      if (items.length > MAX_LISTED) {
+        const more = `+${items.length - MAX_LISTED} more`;
+        console.log(`    ${kind}: ${more}`);
+        lines.push(`  - ${kind}: ${more}`);
+      }
     }
   }
 
