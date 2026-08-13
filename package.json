@@ -4,7 +4,10 @@
   "description": "Auto-generated Indonesian region data (provinces, cities, districts, villages) from BPS",
   "main": "generate.js",
   "scripts": {
-    "generate": "node generate.js"
+    "generate": "node generate.js",
+    "validate": "node validate.js data",
+    "compare": "node compare.js build data",
+    "check": "OUT_DIR=build node generate.js && node validate.js build --baseline data && node compare.js build data"
   },
   "keywords": [
     "indonesia",

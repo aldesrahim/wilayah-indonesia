@@ -29,10 +29,12 @@ Download from the [latest release](../../releases/latest).
 [{ "id": 1, "code": "11.09.07.2008", "name": "Latiung", "district_id": 1 }]
 ```
 
-- `id` — sequential integer, stable for joins
+- `id` — sequential integer, assigned in `code` order, stable for joins
 - `code` — official Dagri administrative code, for interop with other datasets
 - `name` — Capitalize Case
 - Parent refs are integer `id`s
+
+Rows are always emitted in ascending `code` order per parent, so regenerating unchanged upstream data produces byte-identical files. Treat `code` as the stable key across releases: `id` values shift whenever regions are added or removed.
 
 ## Generate locally
 
@@ -40,22 +42,23 @@ Download from the [latest release](../../releases/latest).
 npm install
 npm run generate
 # output → data/
+
+npm run check
+# generate → build/, validate it, and diff it against the published data/
 ```
 
 ## Releases
 
-Data is versioned with [CalVer](https://calver.org/) (`vYYYY.MM`). A new release is automatically created on the 1st of every month.
+Data is versioned with [CalVer](https://calver.org/) (`vYYYY.MM`). A release runs on the 1st of every month, and can also be started from the Actions tab or by pushing a `v*` tag.
 
-To trigger manually, push a tag:
+Each run:
+1. Generates fresh data into `build/`, leaving `data/` untouched until it passes
+2. Validates it — code formats, unique codes, sequential ids, deterministic order, parent references, and a guard against an upstream response that lost more than 5% of its rows
+3. Compares it to the published `data/`, matching rows by `code`
+4. **Stops here if nothing changed** — no commit, no tag, no release
+5. Otherwise commits to `main`, then creates the release with the JSON files attached and a changelog of what was added, removed, renamed, or reparented
 
-```bash
-git tag v2026.04 && git push origin v2026.04
-```
-
-GitHub Actions will:
-1. Create a pre-release immediately (visible while generating)
-2. Generate and commit data to `main`
-3. Attach JSON files and promote to full release
+Use the **Force** input on a manual run to publish even when the data is unchanged.
 
 ## Inspiration
 

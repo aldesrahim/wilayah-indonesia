@@ -3,14 +3,57 @@ const fs = require("fs");
 const path = require("path");
 
 const BASE = "https://sig.bps.go.id";
-const OUT = path.join(__dirname, "data");
+const OUT = process.env.OUT_DIR ? path.resolve(process.env.OUT_DIR) : path.join(__dirname, "data");
 
-const get = (url) => axios.get(url).then((r) => r.data);
+const RETRIES = 3;
+const RETRY_DELAY = 2000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+async function get(url) {
+  let lastError;
+
+  for (let attempt = 1; attempt <= RETRIES; attempt++) {
+    try {
+      const res = await axios.get(url, { timeout: 30000 });
+
+      if (!Array.isArray(res.data)) {
+        throw new Error(`expected an array, got ${typeof res.data}`);
+      }
+
+      return res.data;
+    } catch (e) {
+      lastError = e;
+      if (attempt < RETRIES) await sleep(RETRY_DELAY * attempt);
+    }
+  }
+
+  throw new Error(`GET ${url} failed after ${RETRIES} attempts: ${lastError.message}`);
+}
+
 const toCapitalCase = (str) =>
   str.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+
+// Region codes are hierarchical and fixed-width per level (11, 1101, 1101010,
+// 1101010001), so sorting each batch lexicographically by code makes the whole
+// traversal - and therefore the generated ids - deterministic across runs even
+// if the upstream API changes the order it returns rows in.
+const byCode = (a, b) => (a.kode_dagri.trim() < b.kode_dagri.trim() ? -1 : 1);
+
+// The upstream API occasionally returns placeholder rows with an empty code and
+// name. Dropping them here keeps the validator's format rules strict.
+let skipped = 0;
+
+function clean(rows, level, parent) {
+  const kept = rows.filter((r) => (r.kode_dagri || "").trim() && (r.nama_dagri || "").trim());
+
+  if (kept.length !== rows.length) {
+    skipped += rows.length - kept.length;
+    console.warn(`  skipped ${rows.length - kept.length} empty ${level} row(s) under parent ${parent}`);
+  }
+
+  return kept.sort(byCode);
+}
 
 class JsonArrayWriter {
   constructor(filePath) {
@@ -50,11 +93,15 @@ async function main() {
   let districtSeq = 0;
   let villageSeq = 0;
 
+  console.log(`Writing to ${OUT}`);
   console.log("Fetching provinces...");
-  const rawProvinces = await get(`${BASE}/rest-bridging-dagri/getwilayah?level=provinsi&parent=0`);
+  const rawProvinces = clean(
+    await get(`${BASE}/rest-bridging-dagri/getwilayah?level=provinsi&parent=0`),
+    "province",
+    "root",
+  );
 
-  for (let pi = 0; pi < rawProvinces.length; pi++) {
-    const p = rawProvinces[pi];
+  for (const p of rawProvinces) {
     const provinceId = ++provinceSeq;
     const provinceCode = p.kode_dagri.trim();
     const provinceName = toCapitalCase(p.nama_dagri);
@@ -63,10 +110,13 @@ async function main() {
     console.log(`[${provinceId}/${rawProvinces.length}] ${provinceName}`);
 
     await sleep(200);
-    const rawCities = await get(`${BASE}/rest-bridging/getwilayah?level=kabupaten&parent=${p.kode_bps}`);
+    const rawCities = clean(
+      await get(`${BASE}/rest-bridging/getwilayah?level=kabupaten&parent=${p.kode_bps}`),
+      "city",
+      provinceCode,
+    );
 
-    for (let ci = 0; ci < rawCities.length; ci++) {
-      const c = rawCities[ci];
+    for (const c of rawCities) {
       const cityId = ++citySeq;
       const cityCode = c.kode_dagri.trim();
       const cityName = toCapitalCase(c.nama_dagri);
@@ -74,10 +124,13 @@ async function main() {
       writers.cities.write({ id: cityId, code: cityCode, name: cityName, province_id: provinceId });
 
       await sleep(100);
-      const rawDistricts = await get(`${BASE}/rest-bridging/getwilayah?level=kecamatan&parent=${c.kode_bps}`);
+      const rawDistricts = clean(
+        await get(`${BASE}/rest-bridging/getwilayah?level=kecamatan&parent=${c.kode_bps}`),
+        "district",
+        cityCode,
+      );
 
-      for (let di = 0; di < rawDistricts.length; di++) {
-        const d = rawDistricts[di];
+      for (const d of rawDistricts) {
         const districtId = ++districtSeq;
         const districtCode = d.kode_dagri.trim();
         const districtName = toCapitalCase(d.nama_dagri);
@@ -85,7 +138,11 @@ async function main() {
         writers.districts.write({ id: districtId, code: districtCode, name: districtName, city_id: cityId });
 
         await sleep(100);
-        const rawVillages = await get(`${BASE}/rest-bridging/getwilayah?level=desa&parent=${d.kode_bps}`);
+        const rawVillages = clean(
+          await get(`${BASE}/rest-bridging/getwilayah?level=desa&parent=${d.kode_bps}`),
+          "village",
+          districtCode,
+        );
 
         for (const v of rawVillages) {
           writers.villages.write({
@@ -101,6 +158,7 @@ async function main() {
 
   await Promise.all(Object.values(writers).map((w) => w.close()));
   console.log(`Done. provinces=${provinceSeq} cities=${citySeq} districts=${districtSeq} villages=${villageSeq}`);
+  if (skipped) console.warn(`Skipped ${skipped} empty upstream row(s) in total.`);
 }
 
 main().catch((e) => {

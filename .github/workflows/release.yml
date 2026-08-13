@@ -1,0 +1,119 @@
+name: Release
+
+on:
+  schedule:
+    - cron: "0 0 1 * *"
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (defaults to v<year>.<month>)"
+        required: false
+      force:
+        description: "Release even when the data is unchanged"
+        type: boolean
+        default: false
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG="${{ github.ref_name }}"
+          elif [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="v$(date -u +'%Y.%m')"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $TAG"
+
+      # Generated into a scratch directory so a failed or partial run can never
+      # overwrite the published data in data/.
+      - name: Generate JSON
+        run: OUT_DIR=build node generate.js
+
+      - name: Validate generated data
+        run: node validate.js build --baseline data
+
+      - name: Compare against published data
+        id: diff
+        run: node compare.js build data
+
+      - name: Report skipped release
+        if: steps.diff.outputs.changed != 'true' && !inputs.force
+        run: |
+          {
+            echo "### No release for ${{ steps.tag.outputs.tag }}"
+            echo
+            echo "The generated data is identical to the published data, so no tag, commit or release was made."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit data
+        if: steps.diff.outputs.changed == 'true' || inputs.force
+        run: |
+          cp build/*.json data/
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/
+          if git diff --cached --quiet; then
+            echo "Nothing to commit."
+          else
+            git commit -m "chore: update region data (${{ steps.tag.outputs.tag }})"
+            git pull --rebase origin main
+            git push origin main
+          fi
+
+      - name: Publish release
+        if: steps.diff.outputs.changed == 'true' || inputs.force
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          {
+            echo "Auto-generated Indonesian region data."
+            echo
+            echo "### Changes"
+            echo
+            cat build/summary.md
+          } > notes.md
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" data/*.json --clobber
+            gh release edit "$TAG" --notes-file notes.md --prerelease=false --latest
+          else
+            gh release create "$TAG" data/*.json \
+              --target main \
+              --title "Region Data $TAG" \
+              --notes-file notes.md \
+              --latest
+          fi
+
+          {
+            echo "### Released $TAG"
+            echo
+            cat build/summary.md
+          } >> "$GITHUB_STEP_SUMMARY"
